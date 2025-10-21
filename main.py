@@ -35,10 +35,15 @@ class PyTFAApp:
         self.add_button = Gtk.Button.new_with_label("Add Account")
         self.add_button.connect("clicked", self.on_add_account)
         header.pack_end(self.add_button)
-        
+
         # Timer label
         self.timer_label = Gtk.Label()
         header.pack_start(self.timer_label)
+
+        # Global timer progress bar anchored in header
+        self.timer_progress = Gtk.ProgressBar()
+        self.timer_progress.set_hexpand(True)
+        header.pack_start(self.timer_progress)
         
         # Create scrolled window for accounts
         scrolled = Gtk.ScrolledWindow()
@@ -52,6 +57,7 @@ class PyTFAApp:
         # Password entry for encryption
         self.password = None
         self.account_widgets = {}  # Store mapping of account to widgets
+        self.expanded_service = None
         
         # Load encrypted data
         self.load_encrypted_data()
@@ -174,12 +180,20 @@ class PyTFAApp:
         else:
             confirm_entry = None
         
+        def trigger_ok(*_args):
+            dialog.response(Gtk.ResponseType.OK)
+
+        password_entry.connect("activate", trigger_ok)
+
+        if initial_setup and confirm_entry:
+            confirm_entry.connect("activate", trigger_ok)
+
         dialog.show_all()
         response = dialog.run()
-        
+
         if response == Gtk.ResponseType.OK:
             password = password_entry.get_text()
-            
+
             if initial_setup:
                 confirm = confirm_entry.get_text() if confirm_entry else ""
                 if password != confirm:
@@ -339,64 +353,103 @@ class PyTFAApp:
             box.set_margin_start(10)
             box.set_margin_end(10)
             row.add(box)
-            
-            # First row: Service name and buttons
-            top_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
-            box.pack_start(top_box, False, False, 0)
-            
-            # Service label
+
+            # Header with service name and arrow indicator
+            header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+
+            arrow_image = Gtk.Image.new_from_icon_name("go-next-symbolic", Gtk.IconSize.BUTTON)
+            header_box.pack_start(arrow_image, False, False, 0)
+
             service_label = Gtk.Label(label=account['service'])
             service_label.set_halign(Gtk.Align.START)
             service_label.set_hexpand(True)
-            top_box.pack_start(service_label, True, True, 0)
-            
-            # View secret button
+            header_box.pack_start(service_label, True, True, 0)
+
+            header_event_box = Gtk.EventBox()
+            header_event_box.set_visible_window(False)
+            header_event_box.add(header_box)
+            box.pack_start(header_event_box, False, False, 0)
+
+            # Details revealer containing buttons and code
+            details_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+
+            buttons_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+
             view_btn = Gtk.Button.new_from_icon_name("document-properties", Gtk.IconSize.BUTTON)
             view_btn.set_tooltip_text("View Secret")
             view_btn.connect("clicked", self.on_view_secret, account)
-            top_box.pack_start(view_btn, False, False, 0)
-            
-            # Rename button
+            buttons_box.pack_start(view_btn, False, False, 0)
+
             rename_btn = Gtk.Button.new_from_icon_name("edit", Gtk.IconSize.BUTTON)
             rename_btn.set_tooltip_text("Rename Account")
             rename_btn.connect("clicked", self.on_rename_account, account)
-            top_box.pack_start(rename_btn, False, False, 0)
-            
-            # Delete button
+            buttons_box.pack_start(rename_btn, False, False, 0)
+
             delete_btn = Gtk.Button.new_from_icon_name("edit-delete", Gtk.IconSize.BUTTON)
             delete_btn.set_tooltip_text("Delete Account")
             delete_btn.connect("clicked", self.on_delete_account, account)
-            top_box.pack_start(delete_btn, False, False, 0)
-            
-            # Second row: Code and progress bar
-            bottom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-            box.pack_start(bottom_box, False, False, 0)
-            
-            # Code label
+            buttons_box.pack_start(delete_btn, False, False, 0)
+
+            details_box.pack_start(buttons_box, False, False, 0)
+
             code_label = Gtk.Label(label="Generating...")
             code_label.set_halign(Gtk.Align.START)
             code_label.set_selectable(True)
-            
-            # Use monospace font for code
             font = Pango.FontDescription("Monospace 16")
             code_label.override_font(font)
-            
-            bottom_box.pack_start(code_label, False, False, 0)
-            
-            # Progress bar for timer
-            progress = Gtk.ProgressBar()
-            progress.set_hexpand(True)
-            bottom_box.pack_start(progress, True, True, 0)
-            
+            details_box.pack_start(code_label, False, False, 0)
+
+            revealer = Gtk.Revealer()
+            revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+            revealer.add(details_box)
+            box.pack_start(revealer, False, False, 0)
+
+            header_event_box.connect(
+                "button-press-event",
+                lambda _widget, _event, service=account['service']: self.toggle_account_row(service)
+            )
+
             self.accounts_list.add(row)
-            
-            # Store widget references for updating
+
             self.account_widgets[account['service']] = {
                 'code_label': code_label,
-                'progress_bar': progress
+                'revealer': revealer,
+                'arrow_image': arrow_image
             }
-        
+
         self.accounts_list.show_all()
+
+        if self.expanded_service and self.expanded_service not in self.account_widgets:
+            self.expanded_service = None
+
+        for service, widgets in self.account_widgets.items():
+            is_expanded = service == self.expanded_service
+            widgets['revealer'].set_reveal_child(is_expanded)
+            widgets['arrow_image'].set_from_icon_name(
+                "go-down-symbolic" if is_expanded else "go-next-symbolic",
+                Gtk.IconSize.BUTTON
+            )
+
+    def toggle_account_row(self, service):
+        """Expand or collapse the account row for the given service."""
+        if service == self.expanded_service:
+            widgets = self.account_widgets.get(service)
+            if widgets:
+                widgets['revealer'].set_reveal_child(False)
+                widgets['arrow_image'].set_from_icon_name("go-next-symbolic", Gtk.IconSize.BUTTON)
+            self.expanded_service = None
+            return
+
+        if self.expanded_service and self.expanded_service in self.account_widgets:
+            prev_widgets = self.account_widgets[self.expanded_service]
+            prev_widgets['revealer'].set_reveal_child(False)
+            prev_widgets['arrow_image'].set_from_icon_name("go-next-symbolic", Gtk.IconSize.BUTTON)
+
+        widgets = self.account_widgets.get(service)
+        if widgets:
+            widgets['revealer'].set_reveal_child(True)
+            widgets['arrow_image'].set_from_icon_name("go-down-symbolic", Gtk.IconSize.BUTTON)
+            self.expanded_service = service
     
     def on_view_secret(self, widget, account):
         """Handle view secret button click"""
@@ -502,19 +555,16 @@ class PyTFAApp:
         
         # Update global timer
         self.timer_label.set_label(f"Time remaining: {int(time_remaining)}s")
-        
+        self.timer_progress.set_fraction(time_remaining / 30.0)
+
         for account in self.accounts:
             try:
                 totp = pyotp.TOTP(account['secret'])
                 code = totp.now()
-                
+
                 # Update the code label if it exists
                 if account['service'] in self.account_widgets:
                     self.account_widgets[account['service']]['code_label'].set_label(code)
-                    
-                    # Update progress bar
-                    progress = time_remaining / 30.0
-                    self.account_widgets[account['service']]['progress_bar'].set_fraction(progress)
             except Exception as e:
                 print(f"Error generating code for {account['service']}: {e}")
                 if account['service'] in self.account_widgets:
