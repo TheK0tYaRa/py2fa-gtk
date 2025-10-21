@@ -4,14 +4,13 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-pygobject = "*"
 pyotp = "*"
 cryptography = "*"
 opencv-python = "*"
 pyzbar = "*"
+pygobject = "*"
 
 [dev-packages]
 
 [requires]
 python_version = "3.12"
-python_full_version = "3.12.11"
